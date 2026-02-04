@@ -25,14 +25,16 @@ type Server struct {
 	GrpcClient p.MessageClient
 	Log        *wlog.Logger
 	IMSub      string
+	uiDir      string
 }
 
-func NewServer(hub *Hub, grpcClient p.MessageClient, log *wlog.Logger, imSub string) *Server {
+func NewServer(hub *Hub, grpcClient p.MessageClient, log *wlog.Logger, imSub string, uiDir string) *Server {
 	return &Server{
 		Hub:        hub,
 		GrpcClient: grpcClient,
 		Log:        log,
 		IMSub:      imSub,
+		uiDir:      uiDir,
 	}
 }
 
@@ -55,7 +57,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Serve static files
-	fs := http.FileServer(http.Dir("./web/dist"))
+	fs := http.FileServer(http.Dir(s.uiDir))
 	fs.ServeHTTP(w, r)
 }
 

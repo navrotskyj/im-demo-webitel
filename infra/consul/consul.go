@@ -1,176 +1,163 @@
 package consul
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"net/http"
+	"github.com/webitel/wlog"
+	"sort"
 	"time"
 
 	"github.com/hashicorp/consul/api"
-
-	"github.com/webitel/wlog"
+	"github.com/jpillora/backoff"
+	"google.golang.org/grpc/resolver"
 )
 
-type CheckFunction func() error
-
-type Consul struct {
-	id                string
-	agent             Agent
-	stop              chan struct{}
-	check             CheckFunction
-	checkID           string
-	ready             bool
-	config            *Config
-	log               *wlog.Logger
-	serviceInstanceID string
+// init function needs for  auto-register in resolvers registry
+func init() {
+	resolver.Register(&builder{
+		log: wlog.GlobalLogger(),
+	})
 }
 
-type Config struct {
-	Name            string
-	Address         string
-	Port            int
-	TTL             time.Duration
-	CriticalTTL     time.Duration
-	Tags            []string
-	ConsulAgentAddr string
+// resolvr implements resolver.Resolver from the gRPC package.
+// It watches for endpoints changes and pushes them to the underlying gRPC connection.
+type resolvr struct {
+	cancelFunc context.CancelFunc
 }
 
-// NewConsul створює новий екземпляр Consul клієнта.
-// id: унікальний ідентифікатор для екземпляра сервісу.
-// check: функція, яка повертає nil, якщо сервіс здоровий, або error, якщо ні.
-// log: logger
-// consulAgentAddr: адреса Consul агента.
-func NewConsul(id, consulAgentAddr string, log *wlog.Logger, check CheckFunction) (*Consul, error) {
-	if check == nil {
-		return nil, errors.New("check function cannot be nil")
-	}
-
-	conf := api.DefaultConfig()
-	conf.Address = consulAgentAddr
-
-	cli, err := api.NewClient(conf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Consul client: %w", err)
-	}
-
-	c := &Consul{
-		id:      id,
-		log:     log,
-		agent:   cli.Agent(),
-		stop:    make(chan struct{}),
-		check:   check,
-		checkID: fmt.Sprintf("service:%s", id), // CheckID завжди має префікс "service:"
-	}
-
-	return c, nil
+type serviceMeta struct {
+	addr string
+	id   string
 }
 
-// RegisterService реєструє сервіс в Consul.
-// config: конфігурація сервісу для реєстрації.
-func (c *Consul) RegisterService(config Config) error {
-	c.config = &config
+// ResolveNow will be skipped due unnecessary in this case
+func (r *resolvr) ResolveNow(resolver.ResolveNowOptions) {}
 
-	c.serviceInstanceID = fmt.Sprintf("%s-%s", config.Name, c.id)
-
-	serviceRegistration := &api.AgentServiceRegistration{
-		ID:      c.serviceInstanceID,
-		Name:    config.Name,
-		Tags:    config.Tags,
-		Address: config.Address,
-		Port:    config.Port,
-		Check: &api.AgentServiceCheck{
-			DeregisterCriticalServiceAfter: config.CriticalTTL.String(),
-			TTL:                            config.TTL.String(),
-			CheckID:                        c.checkID,
-		},
-	}
-
-	if err := c.agent.ServiceRegister(serviceRegistration); err != nil {
-		return fmt.Errorf("failed to register service %s in Consul: %w", serviceRegistration.Name, err)
-	}
-
-	c.log.Info(fmt.Sprintf("Service '%s' (ID: %s) registered with Consul.", serviceRegistration.Name, serviceRegistration.ID))
-
-	go c.startTTLUpdater(config.TTL / 2)
-
-	c.updateTTLStatus()
-
-	return nil
+// Close closes the resolver.
+func (r *resolvr) Close() {
+	r.cancelFunc()
 }
 
-func (c *Consul) startTTLUpdater(interval time.Duration) {
-	// --- FIX STARTS HERE ---
-	// Add a guard clause to prevent panics from a zero or negative interval.
-	if interval <= 0 {
-		c.log.Error(fmt.Sprintf("Invalid TTL interval (%v) for service ID: %s. TTL updater will not start.", interval, c.serviceInstanceID))
-
-		return
-	}
-	// --- FIX ENDS HERE ---
-
-	defer c.log.Info(fmt.Sprintf("Stopped Consul TTL updater for service ID: %s", c.serviceInstanceID))
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-c.stop:
-			return
-		case <-ticker.C:
-			c.updateTTLStatus()
-		}
-	}
+//go:generate ./bin/moq -out mocks_test.go . servicer
+type servicer interface {
+	Service(string, string, bool, *api.QueryOptions) ([]*api.ServiceEntry, *api.QueryMeta, error)
 }
 
-func (c *Consul) updateTTLStatus() {
-	err := c.check()
-	if err != nil {
-		if agentErr := c.agent.FailTTL(c.checkID, err.Error()); agentErr != nil {
-			c.handleTTLUpdateError(agentErr)
-		}
-
-		c.ready = false
-	} else {
-		if agentErr := c.agent.PassTTL(c.checkID, "Service is healthy."); agentErr != nil {
-			c.handleTTLUpdateError(agentErr)
-		} else {
-			c.ready = true
-		}
+func watchConsulService(ctx context.Context, s servicer, tgt target, out chan<- []serviceMeta) {
+	res := make(chan []serviceMeta)
+	quit := make(chan struct{})
+	bck := &backoff.Backoff{
+		Factor: 2,
+		Jitter: true,
+		Min:    10 * time.Millisecond,
+		Max:    tgt.MaxBackoff,
 	}
-}
-
-func (c *Consul) handleTTLUpdateError(err error) {
-	var apiErr api.StatusError
-	if errors.As(err, &apiErr) {
-		// Перевіряємо, чи це помилка сервера Consul
-		if apiErr.Code == http.StatusInternalServerError {
-			c.log.Error(fmt.Sprintf("Consul returned internal server error during TTL update. Attempting to re-register service ID: %s. Error: %s", c.id, err.Error()))
-
-			if c.config != nil {
-				if regErr := c.RegisterService(*c.config); regErr != nil {
-					c.log.Error(fmt.Sprintf("Failed to re-register service %s (ID: %s) with Consul: %s", c.config.Name, c.id, regErr.Error()))
+	go func() {
+		var lastIndex uint64
+		for {
+			ss, meta, err := s.Service(
+				tgt.Service,
+				tgt.Tag,
+				tgt.Healthy,
+				&api.QueryOptions{
+					WaitIndex:         lastIndex,
+					Near:              tgt.Near,
+					WaitTime:          tgt.Wait,
+					Datacenter:        tgt.Dc,
+					AllowStale:        tgt.AllowStale,
+					RequireConsistent: tgt.RequireConsistent,
+				},
+			)
+			if err != nil {
+				// No need to continue if the context is done/cancelled.
+				// We check that here directly because the check for the closed quit channel
+				// at the end of the loop is not reached when calling continue here.
+				select {
+				case <-quit:
+					return
+				default:
+					wlog.Error(fmt.Sprintf("[Consul resolver] Couldn't fetch endpoints. target={%s}; error={%v}", tgt.String(), err))
+					time.Sleep(bck.Duration())
+					continue
 				}
-			} else {
-				c.log.Error(fmt.Sprintf("Consul config is nil, cannot re-register service ID: %s", c.id))
+			}
+			bck.Reset()
+			lastIndex = meta.LastIndex
+			//wlog.Debug(fmt.Sprintf("[Consul resolver] %d endpoints fetched in(+wait) %s for target={%s}",
+			//	len(ss),
+			//	meta.RequestTime,
+			//	tgt.String(),
+			//))
+
+			ee := make([]serviceMeta, 0, len(ss))
+			for _, s := range ss {
+				address := s.Service.Address
+				if s.Service.Address == "" {
+					address = s.Node.Address
+				}
+				ee = append(ee, serviceMeta{
+					addr: fmt.Sprintf("%s:%d", address, s.Service.Port),
+					id:   s.Service.ID,
+				})
+			}
+
+			if tgt.Limit != 0 && len(ee) > tgt.Limit {
+				ee = ee[:tgt.Limit]
+			}
+			select {
+			case res <- ee:
+				continue
+			case <-quit:
+				return
 			}
 		}
-	} else {
-		c.log.Error(fmt.Sprintf("Error updating Consul TTL for service ID: %s. %s", c.id, err.Error()))
+	}()
+
+	for {
+		// If in the below select both channels have values that can be read,
+		// Go picks one pseudo-randomly.
+		// But when the context is canceled we want to act upon it immediately.
+		if ctx.Err() != nil {
+			// Close quit so the goroutine returns and doesn't leak.
+			// Do NOT close res because that can lead to panics in the goroutine.
+			// res will be garbage collected at some point.
+			close(quit)
+			return
+		}
+		select {
+		case ee := <-res:
+			out <- ee
+		case <-ctx.Done():
+			close(quit)
+			return
+		}
 	}
 }
 
-func (c *Consul) IsReady() bool {
-	return c.ready
-}
-
-func (c *Consul) Shutdown() {
-	c.log.Info(fmt.Sprintf("Deregistering service ID: %s from Consul...", c.id))
-	close(c.stop) // Сигналізуємо горутині зупинитися
-
-	if err := c.agent.ServiceDeregister(c.serviceInstanceID); err != nil {
-		c.log.Error(fmt.Sprintf("Failed to deregister service ID: %s from Consul: %s", c.id, err.Error()))
-	} else {
-		c.log.Info(fmt.Sprintf("Service ID: %s successfully deregistered from Consul.", c.id))
+func populateEndpoints(ctx context.Context, clientConn resolver.ClientConn, input <-chan []serviceMeta) {
+	for {
+		select {
+		case cc := <-input:
+			conns := make([]resolver.Address, 0, len(cc))
+			for _, v := range cc {
+				conns = append(conns, resolver.Address{Addr: v.addr, ServerName: v.id})
+			}
+			sort.Sort(byAddressString(conns)) // Don't replace the same address list in the balancer
+			err := clientConn.UpdateState(resolver.State{Addresses: conns})
+			if err != nil {
+				wlog.Error(fmt.Sprintf("[Consul resolver] Couldn't update client connection. error={%v}", err))
+				continue
+			}
+		case <-ctx.Done():
+			wlog.Info("[Consul resolver] Watch has been finished")
+			return
+		}
 	}
 }
+
+// byAddressString sorts resolver.Address by Address Field  sorting in increasing order.
+type byAddressString []resolver.Address
+
+func (p byAddressString) Len() int           { return len(p) }
+func (p byAddressString) Less(i, j int) bool { return p[i].Addr < p[j].Addr }
+func (p byAddressString) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }

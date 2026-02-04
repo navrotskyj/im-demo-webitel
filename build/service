@@ -1,0 +1,29 @@
+[Unit]
+After=network.target consul.service rabbitmq-server.service postgresql.service
+
+[Service]
+Type=simple
+Restart=always
+EnvironmentFile=/etc/default/im-demo-service.env
+TimeoutStartSec=0
+ExecStart=/home/srvadm/igor/im-demo-service
+
+[Install]
+
+
+[Unit]
+Description=Webitel im demo
+After=network.target consul.service rabbitmq-server.service postgresql.service
+
+[Service]
+Type=simple
+Restart=always
+TimeoutStartSec=0
+StandardError=journal
+StandardOutput=journal
+SyslogIdentifier=DemoIM
+EnvironmentFile=/etc/default/im-demo-service.env
+ExecStart=/home/srvadm/igor/im-demo-service
+
+[Install]
+WantedBy=default.target

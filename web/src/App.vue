@@ -6,7 +6,7 @@ const inputText = ref('')
 const messagesContainer = ref(null)
 
 const connectWebSocket = () => {
-  const ws = new WebSocket('ws://localhost:8080/ws')
+  const ws = new WebSocket(`wss://${window.location.host}${window.location.pathname}/ws`)
   
   ws.onmessage = (event) => {
     try {
@@ -98,7 +98,7 @@ const sendMessage = async () => {
   // We rely on the WebSocket broadcast to show the message.
 
   try {
-    const res = await fetch('http://localhost:8080/api/messages', {
+    const res = await fetch(`${window.location.href}/api/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text })

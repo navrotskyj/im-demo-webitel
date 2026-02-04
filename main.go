@@ -4,13 +4,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
 	p "github.com/webitel/chat_preview/gen/im/api/gateway/v1"
 	"github.com/webitel/chat_preview/infra/pubsub"
+	"github.com/webitel/chat_preview/infra/wbt"
 	"github.com/webitel/chat_preview/internal/server"
-	"github.com/webitel/engine/pkg/wbt"
 	"github.com/webitel/wlog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -88,16 +89,21 @@ func main() {
 	go hub.Run()
 
 	imSub := getEnv("IM_SUB", "2522")
-	srv := server.NewServer(hub, cli.Api, wlog.GlobalLogger(), imSub)
+	uiDir := getEnv("UI_DIR", "./web/dist")
+
+	srv := server.NewServer(hub, cli.Api, wlog.GlobalLogger(), imSub, uiDir)
 
 	// Start RabbitMQ consumer
 	amqpAddr := getEnv("AMQP", "amqp://user:pass@localhost:5672")
 	startps(srv, amqpAddr)
 
+	port := getEnv("PORT", ":8080")
+
 	// Start HTTP Server
 	go func() {
-		wlog.Info("Starting HTTP server on :8080, ui http://localhost:8080")
-		if err := http.ListenAndServe(":8080", srv); err != nil {
+		wlog.Info(fmt.Sprintf("Listening on port %s", port))
+
+		if err := http.ListenAndServe(port, srv); err != nil {
 			wlog.Error("HTTP server error", wlog.Err(err))
 		}
 	}()
