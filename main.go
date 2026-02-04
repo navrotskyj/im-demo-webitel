@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"github.com/pborman/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"net/http"
@@ -29,14 +32,15 @@ type MessageWrapper struct {
 
 // Message описує вкладений об'єкт повідомлення
 type Message struct {
-	ID        string     `json:"ID"`
-	ThreadID  string     `json:"thread_id"`
-	DomainID  int        `json:"domain_id"`
-	From      ImEndpoint `json:"from"`
-	To        ImEndpoint `json:"to"`
-	Text      string     `json:"text"`
-	CreatedAt int64      `json:"created_at"` // Unix timestamp у мілісекундах
-	Me        bool       `json:"me"`
+	ID        string          `json:"ID"`
+	ThreadID  string          `json:"thread_id"`
+	DomainID  int             `json:"domain_id"`
+	From      ImEndpoint      `json:"from"`
+	To        ImEndpoint      `json:"to"`
+	Text      string          `json:"text"`
+	CreatedAt int64           `json:"created_at"` // Unix timestamp у мілісекундах
+	Me        bool            `json:"me"`
+	Images    json.RawMessage `json:"images"`
 }
 
 // From описує відправника
@@ -118,17 +122,19 @@ func startps(srv *server.Server, addr string) {
 		panic(err.Error())
 	}
 	ps.AddOnConnect(func(channel *pubsub.Channel) error {
-		if err := channel.DeclareDurableQueue("wor_test", pubsub.Headers{
+		qname := fmt.Sprintf("chat_preview_%s", NewId()[:6])
+		if err := channel.DeclareDurableQueue(qname, pubsub.Headers{
 			"x-queue-type": "quorum",
+			"x-expires":    10000,
 		}); err != nil {
 			return err
 		}
 
-		if err := channel.BindQueue("wor_test", "#", "im_delivery.broadcast", pubsub.Headers{}); err != nil {
+		if err := channel.BindQueue(qname, "#", "im_delivery.broadcast", pubsub.Headers{}); err != nil {
 			return err
 		}
 
-		delivery, err := channel.ConsumeQueue("wor_test", false)
+		delivery, err := channel.ConsumeQueue(qname, false)
 		if err != nil {
 			return err
 		}
@@ -140,12 +146,18 @@ func startps(srv *server.Server, addr string) {
 						return
 					}
 
+					println(string(msg.Body))
+
 					var m MessageWrapper
 					if err := json.Unmarshal(msg.Body, &m); err == nil {
 						// Log locally
 						println("Received: " + m.Message.Text)
 					}
-					m.Message.Me = m.Message.From.Sub == srv.IMSub || m.Message.From.Sub == "2"
+
+					if m.Message.Images != nil {
+						println("images not empty")
+					}
+					m.Message.Me = m.Message.From.Sub == "2"
 					js, err := json.Marshal(m)
 					if err != nil {
 						panic(err.Error())
@@ -193,4 +205,15 @@ func LoadTlsCreds(cfg TLSConfig) (*tls.Config, error) {
 		RootCAs:      caCertPool,
 		ServerName:   "im-gateway-service", // Common Name of the server cert
 	}, nil
+}
+
+var encoding = base32.NewEncoding("ybndrfg8ejkmcpqxot1uwisza345h769")
+
+func NewId() string {
+	var b bytes.Buffer
+	encoder := base32.NewEncoder(encoding, &b)
+	encoder.Write(uuid.NewRandom())
+	encoder.Close()
+	b.Truncate(26) // removes the '==' padding
+	return b.String()
 }

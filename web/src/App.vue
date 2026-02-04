@@ -4,6 +4,15 @@ import { ref, onMounted, nextTick } from 'vue'
 const messages = ref([])
 const inputText = ref('')
 const messagesContainer = ref(null)
+const selectedImage = ref(null)
+
+const openLightbox = (url) => {
+  selectedImage.value = url
+}
+
+const closeLightbox = () => {
+  selectedImage.value = null
+}
 
 const connectWebSocket = () => {
   let wsUrl = `${window.location.href.replace(/http/, 'ws')}`;
@@ -61,10 +70,24 @@ const connectWebSocket = () => {
       
       msg.id = id
       msg.text = text
+      msg.id = id
+      msg.text = text
       msg.from = fromName
       
+      // Handle images/files
+      if (data.message && data.message.images && Array.isArray(data.message.images)) {
+        msg.files = data.message.images.map(img => ({
+          id: img.id,
+          url: img.url,
+          name: img.file_name,
+          type: img.mime_type
+        }))
+      } else {
+        msg.files = []
+      }
+      
       // Use backend 'me' flag if available
-      if (data.message && data.message.me) {
+      if (me) {
           msg.isMine = true
           msg.from = "Me"
       }
@@ -161,6 +184,14 @@ onMounted(() => {
         >
           <div class="sender" v-if="!msg.isMine">{{ msg.from }}</div>
           <div class="text">{{ msg.text }}</div>
+          
+          <div v-if="msg.files && msg.files.length" class="attachments">
+            <div v-for="file in msg.files" :key="file.id" class="attachment-item">
+               <img v-if="file.type.startsWith('image/')" :src="file.url" :alt="file.name" class="message-media clickable" @click="openLightbox(file.url)" />
+               <video v-else-if="file.type.startsWith('video/')" :src="file.url" controls class="message-media"></video>
+               <a v-else :href="file.url" target="_blank" class="file-link">{{ file.name || 'Download File' }}</a>
+            </div>
+          </div>
           <div class="time">{{ formatTime(msg.createdAt) }}</div>
         </div>
       </div>
@@ -177,6 +208,13 @@ onMounted(() => {
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
           </svg>
         </button>
+      </div>
+    </div>
+    
+    <!-- Lightbox Modal -->
+    <div v-if="selectedImage" class="lightbox" @click="closeLightbox">
+      <div class="lightbox-content">
+        <img :src="selectedImage" />
       </div>
     </div>
   </div>
@@ -301,6 +339,76 @@ header h1 {
   font-size: 0.7rem;
   color: var(--text-dim);
   margin-bottom: 4px;
+}
+
+.attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-media {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.message-media.clickable {
+  cursor: zoom-in;
+  transition: transform 0.2s;
+}
+
+.message-media.clickable:hover {
+  transform: scale(1.02);
+}
+
+/* Lightbox */
+.lightbox {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.lightbox-content img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  animation: zoomIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.file-link {
+  display: inline-block;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.file-link:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .time {
