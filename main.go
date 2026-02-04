@@ -5,6 +5,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"net/http"
 	"os"
 
@@ -13,8 +15,6 @@ import (
 	"github.com/webitel/chat_preview/infra/wbt"
 	"github.com/webitel/chat_preview/internal/server"
 	"github.com/webitel/wlog"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 const ServiceName = "im-gateway-service"

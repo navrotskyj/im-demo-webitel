@@ -6,7 +6,13 @@ const inputText = ref('')
 const messagesContainer = ref(null)
 
 const connectWebSocket = () => {
-  const ws = new WebSocket(`wss://${window.location.host}${window.location.pathname}/ws`)
+  let wsUrl = `${window.location.href.replace(/http/, 'ws')}`;
+  if (window.location.pathname !== '/') {
+    wsUrl+= '/'
+  }
+  wsUrl+='ws';
+  const ws = new WebSocket(wsUrl)
+  console.error('try open: ', wsUrl)
   
   ws.onmessage = (event) => {
     try {
@@ -96,11 +102,20 @@ const sendMessage = async () => {
   
   // Optimistic UI removed to prevent duplication as per user feedback
   // We rely on the WebSocket broadcast to show the message.
+  let apiUrl = window.location.href
+  if (!/\/$/.test(apiUrl)) {
+    apiUrl += '/'
+  }
+  
+  apiUrl += 'api/messages'
 
   try {
-    const res = await fetch(`${window.location.href}/api/messages`, {
+    const res = await fetch(apiUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'access-token': localStorage.getItem('access-token') || ''
+      },
       body: JSON.stringify({ text })
     })
     if (!res.ok) {

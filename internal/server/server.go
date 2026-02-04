@@ -103,7 +103,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		sub = req.Sub
 	}
 
-	_, err := s.GrpcClient.SendText(ctx, &p.SendTextRequest{
+	result, err := s.GrpcClient.SendText(ctx, &p.SendTextRequest{
 		To: &p.Peer{
 			Kind: &p.Peer_Contact{
 				Contact: &p.PeerIdentity{
@@ -115,8 +115,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Body: req.Text,
 	})
 
+	println(result.String())
+
 	if err != nil {
-		s.Log.Error("failed to send text", wlog.Err(err))
+		wlog.Error("failed to send text", wlog.Err(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
