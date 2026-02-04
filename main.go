@@ -56,13 +56,20 @@ type TLSConfig struct {
 //TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
 // the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
 
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
 func main() {
-	consul := "172.22.22.22:8500"
+	consul := getEnv("CONSUL", "localhost:8500")
 
 	tlsConfig := TLSConfig{
-		CertPath: "/Users/ihor/work/flow_manager/webitel-flow-manager-client.pem",
-		KeyPath:  "/Users/ihor/work/flow_manager/webitel-flow-manager-client-key.pem",
-		CAPath:   "/Users/ihor/work/flow_manager/ca.pem",
+		CertPath: getEnv("SERVICE_CONN_CLIENT_CERT", "flow-manager-client.pem"),
+		KeyPath:  getEnv("SERVICE_CONN_CLIENT_KEY", "flow-manager-client-key.pem"),
+		CAPath:   getEnv("SERVICE_CONN_CLIENT_CA", "ca.pem"),
 	}
 
 	t, _ := LoadTlsCreds(tlsConfig)
@@ -80,10 +87,12 @@ func main() {
 	hub := server.NewHub()
 	go hub.Run()
 
-	srv := server.NewServer(hub, cli.Api, wlog.GlobalLogger())
+	imSub := getEnv("IM_SUB", "2522")
+	srv := server.NewServer(hub, cli.Api, wlog.GlobalLogger(), imSub)
 
 	// Start RabbitMQ consumer
-	startps(srv)
+	amqpAddr := getEnv("AMQP", "amqp://user:pass@localhost:5672")
+	startps(srv, amqpAddr)
 
 	// Start HTTP Server
 	go func() {
@@ -97,8 +106,11 @@ func main() {
 	select {}
 }
 
-func startps(srv *server.Server) {
-	ps, _ := pubsub.New(wlog.GlobalLogger(), "amqp://webitel:webitel@172.22.22.22:5672")
+func startps(srv *server.Server, addr string) {
+	ps, err := pubsub.New(wlog.GlobalLogger(), addr)
+	if err != nil {
+		panic(err.Error())
+	}
 	ps.AddOnConnect(func(channel *pubsub.Channel) error {
 		if err := channel.DeclareDurableQueue("wor_test", pubsub.Headers{
 			"x-queue-type": "quorum",
@@ -127,7 +139,7 @@ func startps(srv *server.Server) {
 						// Log locally
 						println("Received: " + m.Message.Text)
 					}
-					m.Message.Me = m.Message.From.Sub == srv.IMSub
+					m.Message.Me = m.Message.From.Sub == srv.IMSub || m.Message.From.Sub == "2"
 					js, err := json.Marshal(m)
 					if err != nil {
 						panic(err.Error())

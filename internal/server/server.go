@@ -27,12 +27,12 @@ type Server struct {
 	IMSub      string
 }
 
-func NewServer(hub *Hub, grpcClient p.MessageClient, log *wlog.Logger) *Server {
+func NewServer(hub *Hub, grpcClient p.MessageClient, log *wlog.Logger, imSub string) *Server {
 	return &Server{
 		Hub:        hub,
 		GrpcClient: grpcClient,
 		Log:        log,
-		IMSub:      "2",
+		IMSub:      imSub,
 	}
 }
 
@@ -53,7 +53,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSendMessage(w, r)
 		return
 	}
-	http.NotFound(w, r)
+
+	// Serve static files
+	fs := http.FileServer(http.Dir("./web/dist"))
+	fs.ServeHTTP(w, r)
 }
 
 func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +95,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 	ctx = metadata.NewOutgoingContext(ctx, header)
 
-	sub := "2522" // default from main.go
+	sub := s.IMSub
 
 	if req.Sub != "" {
 		sub = req.Sub

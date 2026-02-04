@@ -36,6 +36,7 @@ const connectWebSocket = () => {
       let fromName = "User"
       let text = ""
       let id = Date.now()
+      let me = false
 
       if (data.message) {
           text = data.message.text
@@ -43,6 +44,7 @@ const connectWebSocket = () => {
              fromID = data.message.from.sub || data.message.from.id
              fromName = data.message.from.name || fromID
           }
+          me = data.message.me
           if (data.ID) id = data.ID
       } else if (data.text) {
           text = data.text
@@ -55,17 +57,12 @@ const connectWebSocket = () => {
       msg.text = text
       msg.from = fromName
       
-      if (fromID === "2") {
-          msg.isMine = true
-          msg.from = "Me"
-      }
-      
       // Use backend 'me' flag if available
       if (data.message && data.message.me) {
           msg.isMine = true
           msg.from = "Me"
       }
-      
+      console.error(data)
       if (data.message && data.message.created_at) {
           msg.createdAt = data.message.created_at
       } else {
