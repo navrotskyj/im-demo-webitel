@@ -96,7 +96,7 @@ func main() {
 
 	// Start HTTP Server
 	go func() {
-		wlog.Info("Starting HTTP server on :8080")
+		wlog.Info("Starting HTTP server on :8080, ui http://localhost:8080")
 		if err := http.ListenAndServe(":8080", srv); err != nil {
 			wlog.Error("HTTP server error", wlog.Err(err))
 		}
