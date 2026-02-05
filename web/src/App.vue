@@ -33,19 +33,49 @@ const triggerFileSelect = () => {
   fileInput.value.click()
 }
 
-const handleFileUpload = (event) => {
+const handleFileUpload = async (event) => {
   const files = Array.from(event.target.files)
   if (files.length > 0) {
     // In a real app, we would upload these or read them as data URLs for preview
     // For now we just store the file objects to show pending count/names
-    files.forEach(f => {
+    const formData = new FormData()
+
+    for (const file of files) {
+      formData.append(file.name, file)
+    }
+    let id = 'todo';
+    let basePath = '';
+    let access = localStorage.getItem('access-token');
+    if (location.pathname === '/') {
+      basePath = 'https://dev.webitel.com'
+    } else {
+      basePath = location.origin;
+    }
+    let url = `${basePath}/api/storage/file/${id}/upload?channel=chat`
+
+
+    const res = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'X-Webitel-Access': access,
+      }
+      // IMPORTANT: Do NOT manually set Content-Type for FormData with files.
+      // The browser sets the correct 'multipart/form-data' boundary automatically.
+    })
+
+    const storeFiles = await res.json()
+
+    storeFiles.forEach(f => {
        pendingFiles.value.push({
          name: f.name,
          size: f.size,
-         type: f.type,
-         file: f // keep reference
+         type: f.mime,
+         id: f.id,
+         link: basePath + f.shared
        })
     })
+
   }
   // Reset input so same file can be selected again if needed
   if (fileInput.value) fileInput.value.value = ''
@@ -185,7 +215,7 @@ const sendMessage = async () => {
         'Content-Type': 'application/json',
         'access-token': localStorage.getItem('access-token') || ''
       },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text, filesToSend })
     })
     if (!res.ok) {
         throw new Error("Failed to send")

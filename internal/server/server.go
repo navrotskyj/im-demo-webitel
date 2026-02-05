@@ -3,12 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-
 	"github.com/gorilla/websocket"
 	p "github.com/webitel/chat_preview/gen/im/api/gateway/v1"
 	"github.com/webitel/wlog"
 	"google.golang.org/grpc/metadata"
+	"net/http"
+	"strconv"
 )
 
 var upgrader = websocket.Upgrader{
@@ -75,10 +75,19 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	go client.writePump()
 }
 
+type File struct {
+	Name string `json:"name"`
+	ID   int    `json:"id"`
+	Type string `json:"type"`
+	Size int64  `json:"size"`
+	Link string `json:"link"`
+}
+
 type SendMessageRequest struct {
 	Text string `json:"text"`
 	// In a real app we would want user info here, but for now we hardcode or send minimal
-	Sub string `json:"sub"` // optional override
+	Sub         string `json:"sub"` // optional override
+	FilesToSend []File `json:"filesToSend"`
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -103,19 +112,48 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		sub = req.Sub
 	}
 
-	result, err := s.GrpcClient.SendText(ctx, &p.SendTextRequest{
-		To: &p.Peer{
-			Kind: &p.Peer_Contact{
-				Contact: &p.PeerIdentity{
-					Sub: sub,
-					Iss: "bot",
-				},
+	to := &p.Peer{
+		Kind: &p.Peer_Contact{
+			Contact: &p.PeerIdentity{
+				Sub: sub,
+				Iss: "bot",
 			},
 		},
+	}
+
+	var err error
+
+	if len(req.FilesToSend) != 0 {
+		var docs []*p.ImageInput
+
+		for _, file := range req.FilesToSend {
+			docs = append(docs, &p.ImageInput{
+				Id:   strconv.Itoa(file.ID),
+				Name: file.Name,
+				//Link:     file.Link,
+				MimeType: file.Type,
+			})
+
+			println(file.Link)
+		}
+
+		_, err = s.GrpcClient.SendImage(ctx, &p.SendImageRequest{
+			To: to,
+			Image: &p.ImageRequest{
+				Images: docs,
+				Body:   req.Text,
+			},
+		})
+
+		if err != nil {
+			req.Text = err.Error()
+		}
+	}
+
+	_, err = s.GrpcClient.SendText(ctx, &p.SendTextRequest{
+		To:   to,
 		Body: req.Text,
 	})
-
-	println(result.String())
 
 	if err != nil {
 		wlog.Error("failed to send text", wlog.Err(err))
