@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strconv"
+
 	"github.com/gorilla/websocket"
 	p "github.com/webitel/chat_preview/gen/im/api/gateway/v1"
 	"github.com/webitel/wlog"
 	"google.golang.org/grpc/metadata"
-	"net/http"
-	"strconv"
 )
 
 var upgrader = websocket.Upgrader{
@@ -21,20 +22,22 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	Hub        *Hub
-	GrpcClient p.MessageClient
-	Log        *wlog.Logger
-	IMSub      string
-	uiDir      string
+	Hub       *Hub
+	MsgClient p.MessageClient
+	AccClient p.AccountClient
+	Log       *wlog.Logger
+	IMSub     string
+	uiDir     string
 }
 
-func NewServer(hub *Hub, grpcClient p.MessageClient, log *wlog.Logger, imSub string, uiDir string) *Server {
+func NewServer(hub *Hub, msgCli p.MessageClient, accCli p.AccountClient, log *wlog.Logger, imSub string, uiDir string) *Server {
 	return &Server{
-		Hub:        hub,
-		GrpcClient: grpcClient,
-		Log:        log,
-		IMSub:      imSub,
-		uiDir:      uiDir,
+		Hub:       hub,
+		MsgClient: msgCli,
+		AccClient: accCli,
+		Log:       log,
+		IMSub:     imSub,
+		uiDir:     uiDir,
 	}
 }
 
@@ -101,8 +104,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// Replicating main.go logic
 	ctx := context.Background()
 	header := metadata.New(map[string]string{
-		"x-webitel-type":   "schema",
-		"x-webitel-schema": "1.2",
+		"x-webitel-access": "",
 	})
 	ctx = metadata.NewOutgoingContext(ctx, header)
 
@@ -137,7 +139,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			println(file.Link)
 		}
 
-		_, err = s.GrpcClient.SendImage(ctx, &p.SendImageRequest{
+		_, err = s.MsgClient.SendImage(ctx, &p.SendImageRequest{
 			To: to,
 			Image: &p.ImageRequest{
 				Images: docs,
@@ -150,7 +152,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err = s.GrpcClient.SendText(ctx, &p.SendTextRequest{
+	_, err = s.MsgClient.SendText(ctx, &p.SendTextRequest{
 		To:   to,
 		Body: req.Text,
 	})

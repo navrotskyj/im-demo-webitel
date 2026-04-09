@@ -124,13 +124,13 @@ const connectWebSocket = () => {
       let id = Date.now()
       let me = false
 
-      if (data.message) {
-          text = data.message.text
-          if (data.message.from) {
-             fromID = data.message.from.sub || data.message.from.id
-             fromName = data.message.from.name || fromID
+      if (data.payload) {
+          text = data.payload.text
+          if (data.payload.from) {
+             fromID = data.payload.from.sub || data.payload.from.id
+             fromName = data.payload.from.name || fromID
           }
-          me = data.message.me
+          me = data.payload.me
           if (data.ID) id = data.ID
       } else if (data.text) {
           text = data.text
@@ -146,10 +146,10 @@ const connectWebSocket = () => {
       msg.from = fromName
       
       // Handle images/files
-      if (data.message && data.message.images && Array.isArray(data.message.images)) {
-        msg.files = data.message.images.map(img => ({
+      if (data.payload && data.payload.images && Array.isArray(data.payload.images)) {
+        msg.files = data.payload.images.map(img => ({
           id: img.id,
-          url: img.url,
+          url:  "https://dev.webitel.com/" + img.url,
           name: img.file_name,
           type: img.mime_type
         }))
@@ -163,8 +163,8 @@ const connectWebSocket = () => {
           msg.from = "Me"
       }
       console.error(data)
-      if (data.message && data.message.created_at) {
-          msg.createdAt = data.message.created_at
+      if (data.payload && data.payload.created_at) {
+          msg.createdAt = data.payload.created_at
       } else {
           msg.createdAt = Date.now()
       }
@@ -671,5 +671,10 @@ input:focus {
 
 .emoji-item:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+.text {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

@@ -7,11 +7,12 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+
 	"github.com/pborman/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"net/http"
-	"os"
 
 	p "github.com/webitel/chat_preview/gen/im/api/gateway/v1"
 	"github.com/webitel/chat_preview/infra/pubsub"
@@ -24,15 +25,16 @@ const ServiceName = "im-gateway-service"
 
 // MessageWrapper представляє кореневий об'єкт
 type MessageWrapper struct {
-	ID       string  `json:"ID"`
-	Message  Message `json:"message"`
+	ID       string  `json:"id"`
+	Message  Message `json:"payload"`
 	UserID   string  `json:"user_id"`
 	DomainID int64   `json:"domain_id"`
+	Echo     bool    `json:"echo"`
 }
 
 // Message описує вкладений об'єкт повідомлення
 type Message struct {
-	ID        string          `json:"ID"`
+	ID        string          `json:"id"`
 	ThreadID  string          `json:"thread_id"`
 	DomainID  int             `json:"domain_id"`
 	From      ImEndpoint      `json:"from"`
@@ -71,19 +73,28 @@ func getEnv(key, fallback string) string {
 func main() {
 	consul := getEnv("CONSUL", "localhost:8500")
 
-	tlsConfig := TLSConfig{
-		CertPath: getEnv("SERVICE_CONN_CLIENT_CERT", "flow-manager-client.pem"),
-		KeyPath:  getEnv("SERVICE_CONN_CLIENT_KEY", "flow-manager-client-key.pem"),
-		CAPath:   getEnv("SERVICE_CONN_CLIENT_CA", "ca.pem"),
-	}
+	//tlsConfig := TLSConfig{
+	//	CertPath: getEnv("SERVICE_CONN_CLIENT_CERT", "flow-manager-client.pem"),
+	//	KeyPath:  getEnv("SERVICE_CONN_CLIENT_KEY", "flow-manager-client-key.pem"),
+	//	CAPath:   getEnv("SERVICE_CONN_CLIENT_CA", "ca.pem"),
+	//}
 
-	t, _ := LoadTlsCreds(tlsConfig)
+	//t, _ := LoadTlsCreds(tlsConfig)
+
+	t := &tls.Config{
+		InsecureSkipVerify: true, // ❗️ вимикає перевірку сертифіката
+	}
 	var opts []wbt.Option
 	opts = append(opts, wbt.WithGrpcOptions(
 		grpc.WithTransportCredentials(credentials.NewTLS(t)),
 	))
 
-	cli, err := wbt.NewClient(consul, ServiceName, p.NewMessageClient, opts...)
+	msgCli, err := wbt.NewClient(consul, ServiceName, p.NewMessageClient, opts...)
+	if err != nil {
+		panic(err)
+	}
+
+	accCli, err := wbt.NewClient(consul, ServiceName, p.NewAccountClient, opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -95,7 +106,7 @@ func main() {
 	imSub := getEnv("IM_SUB", "2522")
 	uiDir := getEnv("UI_DIR", "./web/dist")
 
-	srv := server.NewServer(hub, cli.Api, wlog.GlobalLogger(), imSub, uiDir)
+	srv := server.NewServer(hub, msgCli.Api, accCli.Api, wlog.GlobalLogger(), imSub, uiDir)
 
 	// Start RabbitMQ consumer
 	amqpAddr := getEnv("AMQP", "amqp://user:pass@localhost:5672")
@@ -153,11 +164,15 @@ func startps(srv *server.Server, addr string) {
 						// Log locally
 						println("Received: " + m.Message.Text)
 					}
+					if m.Echo {
+						println("Echoed: " + m.Message.Text)
+						continue
+					}
 
 					if m.Message.Images != nil {
 						println("images not empty")
 					}
-					m.Message.Me = m.Message.From.Sub == "2"
+					m.Message.Me = m.Message.From.Sub == "10"
 					js, err := json.Marshal(m)
 					if err != nil {
 						panic(err.Error())
